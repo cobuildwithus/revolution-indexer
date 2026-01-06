@@ -127,11 +127,12 @@ export const getProposalPayoutAndExecutionData = (decoded: {
 
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i];
-    const signature = signatures[i];
-    const calldata = calldatas[i];
+    // Empty signature/calldata is valid onchain (ETH-only or raw calldata actions).
+    const signature = signatures[i] ?? "";
+    const calldata = calldatas[i] ?? "0x";
     const ethValue = values[i];
 
-    if (!target || !signature || !calldata || ethValue === undefined) {
+    if (!target || ethValue === undefined) {
       throw new Error("Missing decoded data");
     }
 
