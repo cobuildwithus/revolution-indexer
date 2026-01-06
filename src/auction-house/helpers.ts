@@ -1,3 +1,4 @@
+import type { Context } from "ponder:registry";
 import { auctionHouseAbi } from "../../abis/AuctionHouseAbi";
 
 // Local in-process caches to reduce RPC/HTTP calls during backfills.
@@ -20,6 +21,8 @@ export const normalizeAddress = (address: string) => address.toLowerCase();
 
 export const toDateFromSeconds = (seconds: bigint | number) =>
   new Date(Number(seconds) * 1000);
+
+const numberishToString = (value: bigint | number) => value.toString();
 
 // Store dates as ISO strings so JSON round-trips cleanly.
 export const buildAuctionDetails = (
@@ -59,7 +62,7 @@ export const generateAuctionUniqueId = (
 
 // Resolve the ERC-721 token for a Revolution auction house (cached).
 export const getAuctionTokenContract = async (
-  context: { client: { readContract: Function } },
+  context: Context<"AuctionHouse:AuctionCreated">,
   auctionContract: `0x${string}`,
 ): Promise<`0x${string}`> => {
   const cacheKey = auctionContract.toLowerCase();
@@ -79,7 +82,7 @@ export const getAuctionTokenContract = async (
 
 // Snapshot auction settings at ingest time to mirror legacy behavior.
 export const getAuctionSettings = async (
-  context: { client: { readContract: Function } },
+  context: Context<"AuctionHouse:AuctionCreated">,
   auctionContract: `0x${string}`,
 ) => {
   const [timeBuffer, reservePrice, minBidIncrementPercentage, creatorRateBps, entropyRateBps] =
@@ -112,9 +115,11 @@ export const getAuctionSettings = async (
     ]);
 
   return {
-    timeBuffer: (timeBuffer as bigint).toString(),
-    reservePrice: (reservePrice as bigint).toString(),
-    minBidIncrementPercentage: (minBidIncrementPercentage as bigint).toString(),
+    timeBuffer: numberishToString(timeBuffer as bigint | number),
+    reservePrice: numberishToString(reservePrice as bigint | number),
+    minBidIncrementPercentage: numberishToString(
+      minBidIncrementPercentage as bigint | number,
+    ),
     creatorRateBps: Number(creatorRateBps),
     entropyRateBps: Number(entropyRateBps),
   };

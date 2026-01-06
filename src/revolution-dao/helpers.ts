@@ -1,6 +1,6 @@
 import { formatEther } from "viem";
 
-import { normalizeAddress, toBlockTimestamp } from "./culture-index";
+import { normalizeAddress, toBlockTimestamp } from "../culture-index/helpers";
 
 type ExecutionData = Array<{
   calldata: string;
@@ -11,7 +11,11 @@ type ExecutionData = Array<{
 
 type ProposalStatus = "pending" | "active" | "queued" | "executed" | "cancelled" | "vetoed";
 
-type LastUpdated = { blockNumber: number; transactionIndex: number; logIndex: number };
+export type LastUpdated = {
+  blockNumber: number;
+  transactionIndex: number;
+  logIndex: number;
+};
 
 // Fixed DAO -> token mapping to preserve legacy entityId format.
 const DAO_TOKEN_BY_ADDRESS: Record<string, `0x${string}`> = {
@@ -21,6 +25,16 @@ const DAO_TOKEN_BY_ADDRESS: Record<string, `0x${string}`> = {
 
 export const getDaoTokenContract = (daoAddress: string) =>
   DAO_TOKEN_BY_ADDRESS[normalizeAddress(daoAddress)];
+
+export const getDaoContext = (daoAddress: string, chainId: number) => {
+  const tokenContract = getDaoTokenContract(daoAddress);
+  if (!tokenContract) {
+    console.warn("Skipping DAO event: unknown DAO address", { daoAddress });
+    return null;
+  }
+  const entityId = getRevolutionEntityId(chainId, tokenContract);
+  return { entityId, tokenContract };
+};
 
 export const getRevolutionEntityId = (chainId: number, tokenContract: string) =>
   `ethereum-${chainId}-revolution-${normalizeAddress(tokenContract)}`;
@@ -33,13 +47,26 @@ export const getVoteUniqueId = (entityId: string, voter: string, proposalId: str
 
 export const getEventPosition = (event: {
   block: { number: bigint };
-  transaction: { transactionIndex: number };
-  log: { logIndex: number };
+  transaction: { transactionIndex?: number | null };
+  log: { logIndex?: number | null };
 }): LastUpdated => ({
   blockNumber: Number(event.block.number),
   transactionIndex: event.transaction.transactionIndex ?? 0,
   logIndex: event.log.logIndex ?? 0,
 });
+
+const isLastUpdated = (value: unknown): value is LastUpdated => {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.blockNumber === "number" &&
+    typeof record.transactionIndex === "number" &&
+    typeof record.logIndex === "number"
+  );
+};
+
+export const parseLastUpdated = (value: unknown): LastUpdated | null =>
+  isLastUpdated(value) ? value : null;
 
 // Legacy ordering guard to avoid double-counting proposal/vote updates.
 export const isAlreadyUpdated = (eventPosition: LastUpdated, lastUpdated?: LastUpdated | null) => {
