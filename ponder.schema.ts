@@ -1,6 +1,201 @@
-import { onchainTable } from "ponder";
+import { index, onchainTable, uniqueIndex } from "ponder";
 
-export const example = onchainTable("example", (t) => ({
-  id: t.text().primaryKey(),
-  name: t.text(),
-}));
+// Tables mirror the legacy Prisma models so the app can swap DBs with minimal churn.
+// We use `id` as the primary key and set it to a stable unique value (slug/uniqueId).
+
+export const auctions = onchainTable(
+  "auctions",
+  (t) => ({
+    id: t.text().primaryKey(),
+    uniqueId: t.text().notNull(),
+    chainId: t.integer().notNull(),
+    name: t.text().notNull(),
+    winner: t.text(),
+    winningBid: t.text(),
+    auctionContractAddress: t.text().notNull(),
+    nftContractAddress: t.text().notNull(),
+    pointsPaidToCreators: t.text(),
+    ethPaidToCreators: t.text(),
+    nftTokenId: t.text().notNull(),
+    type: t.text().notNull(),
+    // Stored as JSON to preserve the Prisma `details` shape.
+    details: t.jsonb().notNull(),
+    creatorRateBps: t.integer(),
+    entropyRateBps: t.integer(),
+    acceptanceManifestoSpeech: t.text(),
+    reservePrice: t.text(),
+    minBidIncrementPercentage: t.text(),
+    timeBuffer: t.text(),
+    settlementTransactionHash: t.text(),
+    createdAt: t.timestamp().notNull(),
+    updatedAt: t.timestamp().notNull(),
+  }),
+  (table) => ({
+    uniqueIdIdx: uniqueIndex().on(table.uniqueId),
+    chainIdIdx: index().on(table.chainId),
+    nftTokenIdIdx: index().on(table.nftTokenId),
+    auctionContractAddressIdx: index().on(table.auctionContractAddress),
+    createdAtIdx: index().on(table.createdAt),
+    updatedAtIdx: index().on(table.updatedAt),
+  }),
+);
+
+export const auctionBids = onchainTable(
+  "auctionBids",
+  (t) => ({
+    id: t.text().primaryKey(),
+    uniqueId: t.text().notNull(),
+    bidAmount: t.text().notNull(),
+    transactionHash: t.text().notNull(),
+    bidder: t.text().notNull(),
+    sender: t.text().notNull(),
+    bidCreatedAt: t.timestamp().notNull(),
+    auctionUniqueId: t.text().notNull(),
+    chainId: t.integer().notNull(),
+    auctionContractAddress: t.text().notNull(),
+  }),
+  (table) => ({
+    uniqueIdIdx: uniqueIndex().on(table.uniqueId),
+    auctionUniqueIdIdx: index().on(table.auctionUniqueId),
+    bidderIdx: index().on(table.bidder),
+    bidCreatedAtIdx: index().on(table.bidCreatedAt),
+    auctionContractAddressIdx: index().on(table.auctionContractAddress),
+  }),
+);
+
+export const submissions = onchainTable(
+  "submissions",
+  (t) => ({
+    id: t.text().primaryKey(),
+    slug: t.text().notNull(),
+    contractAddress: t.text().notNull(),
+    chainId: t.integer().notNull(),
+    name: t.text().notNull(),
+    url: t.text().notNull(),
+    thumbnailUrl: t.text(),
+    description: t.text(),
+    body: t.text(),
+    creators: t.jsonb().notNull(),
+    sponsorAddress: t.text().notNull(),
+
+    pieceId: t.text(),
+    logicContractVersion: t.text(),
+    onchainSlug: t.text(),
+
+    votesWeight: t.doublePrecision().notNull().default(0),
+    mediaMetadata: t.jsonb(),
+    muxStreamData: t.jsonb(),
+    muxStreamUrl: t.text(),
+    tokenURI: t.text(),
+
+    hasBeenDropped: t.boolean().notNull().default(false),
+    isHidden: t.boolean().notNull().default(false),
+    isOnchain: t.boolean().notNull().default(false),
+
+    updatedAt: t.timestamp().notNull(),
+    createdAt: t.timestamp().notNull(),
+  }),
+  (table) => ({
+    slugIdx: uniqueIndex().on(table.slug),
+    chainIdIdx: index().on(table.chainId),
+    contractAddressIdx: index().on(table.contractAddress),
+    createdAtIdx: index().on(table.createdAt),
+  }),
+);
+
+export const upvotes = onchainTable(
+  "upvotes",
+  (t) => ({
+    id: t.text().primaryKey(),
+    voter: t.text().notNull(),
+    weight: t.doublePrecision().notNull(),
+    strategy: t.text().notNull(),
+    chainId: t.integer().notNull(),
+    version: t.doublePrecision().notNull(),
+    snapshot: t.integer().notNull(),
+    slug: t.text(),
+    networkAddress: t.text(),
+    uniqueId: t.text().notNull(),
+    createdAt: t.timestamp().notNull(),
+    updatedAt: t.timestamp().notNull(),
+    stale: t.boolean(),
+  }),
+  (table) => ({
+    uniqueIdIdx: uniqueIndex().on(table.uniqueId),
+    voterIdx: index().on(table.voter),
+    chainIdIdx: index().on(table.chainId),
+  }),
+);
+
+export const proposals = onchainTable(
+  "proposals",
+  (t) => ({
+    id: t.text().primaryKey(),
+    v: t.integer(),
+    auctionId: t.text(),
+    chainId: t.integer().notNull(),
+    blockchain: t.text().notNull(),
+    calldatas: t.text().array().notNull(),
+    creation: t.jsonb().notNull(),
+    customFields: t.jsonb(),
+    description: t.text().notNull(),
+    entityId: t.text().notNull(),
+    lastUpdated: t.jsonb(),
+    metadata: t.jsonb().notNull(),
+    network: t.text().notNull(),
+    options: t.jsonb().notNull(),
+    trackerType: t.text().notNull(),
+    payoutAmount: t.jsonb(),
+    proposalId: t.text().notNull(),
+    proposer: t.text().notNull(),
+    signatures: t.text().array().notNull(),
+    status: t.text().notNull(),
+    strategy: t.jsonb(),
+    targets: t.text().array().notNull(),
+    title: t.text(),
+    tokenContract: t.text(),
+    governanceContract: t.text().notNull(),
+    totalUniqueVotes: t.integer().notNull(),
+    totalVotes: t.text().notNull(),
+    type: t.text().notNull(),
+    uniqueId: t.text().notNull(),
+    updatedAt: t.timestamp(),
+    values: t.text().array().notNull(),
+  }),
+  (table) => ({
+    uniqueIdIdx: uniqueIndex().on(table.uniqueId),
+    entityIdIdx: index().on(table.entityId),
+    proposalEntityIdx: uniqueIndex().on(table.proposalId, table.entityId),
+  }),
+);
+
+export const votes = onchainTable(
+  "votes",
+  (t) => ({
+    id: t.text().primaryKey(),
+    v: t.integer(),
+    blockchain: t.text().notNull(),
+    countedInProposal: t.boolean(),
+    name: t.text(),
+    chainId: t.integer(),
+    entityId: t.text().notNull(),
+    lastUpdated: t.jsonb(),
+    network: t.text().notNull(),
+    optionId: t.integer().notNull(),
+    proposalId: t.text().notNull(),
+    reason: t.text().notNull(),
+    tokenContract: t.text(),
+    type: t.text().notNull(),
+    uniqueId: t.text().notNull(),
+    updatedAt: t.timestamp(),
+    votedAt: t.jsonb().notNull(),
+    voter: t.text().notNull(),
+    weight: t.text().notNull(),
+  }),
+  (table) => ({
+    uniqueIdIdx: uniqueIndex().on(table.uniqueId),
+    entityIdIdx: index().on(table.entityId),
+    voterIdx: index().on(table.voter),
+    proposalEntityIdx: index().on(table.proposalId, table.entityId),
+  }),
+);
