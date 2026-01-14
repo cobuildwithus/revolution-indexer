@@ -1,0 +1,746 @@
+diff --git a/dist/esm/database/actions.js b/dist/esm/database/actions.js
+index 7aa38e8a9a0090131102eb71c482f1c8dc655bf3..173b40200ebb8e9e42fc49e71cce42e808af5150 100644
+--- a/dist/esm/database/actions.js
++++ b/dist/esm/database/actions.js
+@@ -5,6 +5,8 @@ import { MAX_CHECKPOINT_STRING, decodeCheckpoint } from '../utils/checkpoint.js'
+ import { and, eq, getTableColumns, getTableName, getViewName, lte, sql, } from "drizzle-orm";
+ import { getTableConfig } from "drizzle-orm/pg-core";
+ import { getPonderCheckpointTable } from "./index.js";
++const liveQueriesEnabled = process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++    process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
+ export const createIndexes = async (qb, { statements }, context) => {
+     for (const statement of statements.indexes.sql) {
+         await qb.transaction({ label: "create_indexes" }, async (tx) => {
+@@ -54,6 +56,8 @@ export const dropTriggers = async (qb, { tables, chainId }, context) => {
+     }, undefined, context);
+ };
+ export const createLiveQueryTriggers = async (qb, { namespaceBuild, tables, chainId, }, context) => {
++    if (!liveQueriesEnabled)
++        return;
+     await qb.transaction(async (tx) => {
+         const notifyProcedure = getLiveQueryNotifyProcedureName();
+         const notifyTrigger = getLiveQueryNotifyTriggerName();
+@@ -86,6 +90,8 @@ export const dropLiveQueryTriggers = async (qb, { namespaceBuild, tables, chainI
+     }, undefined, context);
+ };
+ export const createLiveQueryProcedures = async (qb, { namespaceBuild }, context) => {
++    if (!liveQueriesEnabled)
++        return;
+     await qb.transaction(async (tx) => {
+         const schema = namespaceBuild.schema;
+         const procedure = getLiveQueryProcedureName();
+@@ -147,9 +153,10 @@ export const createViews = async (qb, { tables, views, namespaceBuild, }, contex
+         await tx.wrap((tx) => tx.execute(`DROP VIEW IF EXISTS "${namespaceBuild.viewsSchema}"."_ponder_checkpoint"`));
+         await tx.wrap((tx) => tx.execute(`CREATE VIEW "${namespaceBuild.viewsSchema}"."_ponder_meta" AS SELECT * FROM "${namespaceBuild.schema}"."_ponder_meta"`));
+         await tx.wrap((tx) => tx.execute(`CREATE VIEW "${namespaceBuild.viewsSchema}"."_ponder_checkpoint" AS SELECT * FROM "${namespaceBuild.schema}"."_ponder_checkpoint"`));
+-        const notifyProcedure = getLiveQueryNotifyProcedureName();
+-        const channel = getLiveQueryChannelName(namespaceBuild.viewsSchema);
+-        await tx.wrap((tx) => tx.execute(`
++        if (liveQueriesEnabled) {
++            const notifyProcedure = getLiveQueryNotifyProcedureName();
++            const channel = getLiveQueryChannelName(namespaceBuild.viewsSchema);
++            await tx.wrap((tx) => tx.execute(`
+ CREATE OR REPLACE FUNCTION "${namespaceBuild.viewsSchema}".${notifyProcedure}
+ RETURNS TRIGGER LANGUAGE plpgsql
+ AS $$
+@@ -175,13 +182,14 @@ AS $$
+     RETURN NULL;
+   END;
+ $$;`));
+-        const trigger = getViewsLiveQueryNotifyTriggerName(namespaceBuild.viewsSchema);
+-        await tx.wrap((tx) => tx.execute(`
++            const trigger = getViewsLiveQueryNotifyTriggerName(namespaceBuild.viewsSchema);
++            await tx.wrap((tx) => tx.execute(`
+ CREATE OR REPLACE TRIGGER "${trigger}"
+ AFTER INSERT OR UPDATE OR DELETE
+ ON "${namespaceBuild.schema}"._ponder_checkpoint
+ FOR EACH STATEMENT
+ EXECUTE PROCEDURE "${namespaceBuild.viewsSchema}".${notifyProcedure};`));
++        }
+     }, undefined, context);
+ };
+ export const revertOmnichain = async (qb, { checkpoint, tables, }, context) => {
+diff --git a/dist/esm/runtime/isolated.js b/dist/esm/runtime/isolated.js
+index ef9a827233f26b7145b65a64ece6c38b4b5ca82c..8b62f05b6531875b951f32ea194977ea92f4ca87 100644
+--- a/dist/esm/runtime/isolated.js
++++ b/dist/esm/runtime/isolated.js
+@@ -17,6 +17,8 @@ import { getHistoricalEventsIsolated, refetchHistoricalEvents, } from "./histori
+ import { getCachedIntervals, getChildAddresses } from "./index.js";
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsIsolated } from "./realtime.js";
++const liveQueriesEnabled = process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++    process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
+ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuild, indexingBuild, crashRecoveryCheckpoint, database, onReady, }) {
+     const chain = indexingBuild.chains[0];
+     const columnAccessPattern = createColumnAccessPattern({
+@@ -274,11 +276,20 @@ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuil
+     const tables = Object.values(schemaBuild.schema).filter(isTable);
+     const endClock = startClock();
+     await createTriggers(database.adminQB, { tables, chainId: chain.id });
+-    await createLiveQueryTriggers(database.adminQB, {
+-        namespaceBuild,
+-        tables,
+-        chainId: chain.id,
+-    });
++    if (liveQueriesEnabled) {
++        await createLiveQueryTriggers(database.adminQB, {
++            namespaceBuild,
++            tables,
++            chainId: chain.id,
++        });
++    }
++    else {
++        await dropLiveQueryTriggers(database.adminQB, {
++            namespaceBuild,
++            tables,
++            chainId: chain.id,
++        });
++    }
+     common.logger.debug({
+         msg: "Created database triggers",
+         chain: chain.name,
+@@ -320,11 +331,13 @@ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuil
+                 };
+                 const endClock = startClock();
+                 await database.userQB.transaction(async (tx) => {
+-                    if (database.userQB.$dialect === "postgres") {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
+-                    }
+-                    else {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                    if (liveQueriesEnabled) {
++                        if (database.userQB.$dialect === "postgres") {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
++                        }
++                        else {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                        }
+                     }
+                     // Events must be run block-by-block, so that `database.commitBlock` can accurately
+                     // update the temporary `checkpoint` value set in the trigger.
+@@ -379,7 +392,8 @@ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuil
+                         .update(PONDER_CHECKPOINT)
+                         .set({ latestCheckpoint: event.checkpoint })
+                         .where(eq(PONDER_CHECKPOINT.chainName, event.chain.name)), context);
+-                    if (event.events.length > 0 &&
++                    if (liveQueriesEnabled &&
++                        event.events.length > 0 &&
+                         database.userQB.$dialect === "pglite") {
+                         await tx.wrap((tx) => tx.execute("TRUNCATE TABLE live_query_tables"), context);
+                     }
+@@ -404,7 +418,9 @@ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuil
+                 // in the `block` case.
+                 await database.userQB.transaction(async (tx) => {
+                     await dropTriggers(tx, { tables, chainId: chain.id }, context);
+-                    await dropLiveQueryTriggers(tx, { namespaceBuild, tables, chainId: chain.id }, context);
++                    if (liveQueriesEnabled) {
++                        await dropLiveQueryTriggers(tx, { namespaceBuild, tables, chainId: chain.id }, context);
++                    }
+                     const counts = await revertIsolated(tx, {
+                         checkpoint: event.checkpoint,
+                         tables,
+@@ -419,7 +435,9 @@ export async function runIsolated({ common, preBuild, namespaceBuild, schemaBuil
+                         });
+                     }
+                     await createTriggers(tx, { tables, chainId: chain.id }, context);
+-                    await createLiveQueryTriggers(tx, { namespaceBuild, tables, chainId: chain.id }, context);
++                    if (liveQueriesEnabled) {
++                        await createLiveQueryTriggers(tx, { namespaceBuild, tables, chainId: chain.id }, context);
++                    }
+                 }, undefined, context);
+                 common.logger.info({
+                     msg: "Reorged block",
+diff --git a/dist/esm/runtime/multichain.js b/dist/esm/runtime/multichain.js
+index 6e59892e93f3ef350d3ed523239f6f3814ec4ca5..8dfa2a932abfb080bb27fab1630097b9ceb95ebc 100644
+--- a/dist/esm/runtime/multichain.js
++++ b/dist/esm/runtime/multichain.js
+@@ -19,6 +19,8 @@ import { getHistoricalEventsMultichain, refetchHistoricalEvents, } from "./histo
+ import { getCachedIntervals, getChildAddresses, } from "./index.js";
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsMultichain } from "./realtime.js";
++const liveQueriesEnabled = process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++    process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
+ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBuild, indexingBuild, crashRecoveryCheckpoint, database, }) {
+     const columnAccessPattern = createColumnAccessPattern({
+         indexingBuild,
+@@ -317,7 +319,12 @@ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBu
+     }
+     endClock = startClock();
+     await createTriggers(database.adminQB, { tables });
+-    await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    if (liveQueriesEnabled) {
++        await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    }
++    else {
++        await dropLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    }
+     common.logger.debug({
+         msg: "Created database triggers",
+         count: tables.length,
+@@ -370,11 +377,13 @@ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBu
+                 };
+                 const endClock = startClock();
+                 await database.userQB.transaction(async (tx) => {
+-                    if (database.userQB.$dialect === "postgres") {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
+-                    }
+-                    else {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                    if (liveQueriesEnabled) {
++                        if (database.userQB.$dialect === "postgres") {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
++                        }
++                        else {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                        }
+                     }
+                     // Events must be run block-by-block, so that `database.commitBlock` can accurately
+                     // update the temporary `checkpoint` value set in the trigger.
+@@ -430,7 +439,7 @@ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBu
+                         .update(PONDER_CHECKPOINT)
+                         .set({ latestCheckpoint: event.checkpoint })
+                         .where(eq(PONDER_CHECKPOINT.chainName, event.chain.name)), context);
+-                    if (database.userQB.$dialect === "pglite") {
++                    if (liveQueriesEnabled && database.userQB.$dialect === "pglite") {
+                         await tx.wrap((tx) => tx.execute("TRUNCATE TABLE live_query_tables"), context);
+                     }
+                 }, undefined, context);
+@@ -454,7 +463,9 @@ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBu
+                 // in the `block` case.
+                 await database.userQB.transaction(async (tx) => {
+                     await dropTriggers(tx, { tables }, context);
+-                    await dropLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++                    if (liveQueriesEnabled) {
++                        await dropLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++                    }
+                     const counts = await revertMultichain(tx, {
+                         checkpoint: event.checkpoint,
+                         tables,
+@@ -467,7 +478,9 @@ export async function runMultichain({ common, preBuild, namespaceBuild, schemaBu
+                         });
+                     }
+                     await createTriggers(tx, { tables }, context);
+-                    await createLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++                    if (liveQueriesEnabled) {
++                        await createLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++                    }
+                 }, undefined, context);
+                 common.logger.info({
+                     msg: "Reorged block",
+diff --git a/dist/esm/runtime/omnichain.js b/dist/esm/runtime/omnichain.js
+index 37f9dfffa285a4df810d28700d7cad5dae4df6e8..a83f763abf779eb02a94c4c3cd2c8f49a78abf28 100644
+--- a/dist/esm/runtime/omnichain.js
++++ b/dist/esm/runtime/omnichain.js
+@@ -20,6 +20,8 @@ import { getHistoricalEventsOmnichain, refetchHistoricalEvents, } from "./histor
+ import { getCachedIntervals, getChildAddresses, } from "./index.js";
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsOmnichain } from "./realtime.js";
++const liveQueriesEnabled = process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++    process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
+ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBuild, indexingBuild, crashRecoveryCheckpoint, database, }) {
+     const columnAccessPattern = createColumnAccessPattern({
+         indexingBuild,
+@@ -324,7 +326,12 @@ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBui
+     }
+     endClock = startClock();
+     await createTriggers(database.adminQB, { tables });
+-    await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    if (liveQueriesEnabled) {
++        await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    }
++    else {
++        await dropLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++    }
+     common.logger.debug({
+         msg: "Created database triggers",
+         count: tables.length,
+@@ -378,11 +385,13 @@ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBui
+                 };
+                 const endClock = startClock();
+                 await database.userQB.transaction(async (tx) => {
+-                    if (database.userQB.$dialect === "postgres") {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
+-                    }
+-                    else {
+-                        await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                    if (liveQueriesEnabled) {
++                        if (database.userQB.$dialect === "postgres") {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP"), context);
++                        }
++                        else {
++                            await tx.wrap((tx) => tx.execute("CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)"), context);
++                        }
+                     }
+                     // Events must be run block-by-block, so that `database.commitBlock` can accurately
+                     // update the temporary `checkpoint` value set in the trigger.
+@@ -440,7 +449,7 @@ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBui
+                         .update(PONDER_CHECKPOINT)
+                         .set({ latestCheckpoint: event.checkpoint })
+                         .where(eq(PONDER_CHECKPOINT.chainName, event.chain.name)), context);
+-                    if (database.userQB.$dialect === "pglite") {
++                    if (liveQueriesEnabled && database.userQB.$dialect === "pglite") {
+                         await tx.wrap((tx) => tx.execute("TRUNCATE TABLE live_query_tables"), context);
+                     }
+                 }, undefined, context);
+@@ -462,9 +471,11 @@ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBui
+                 const endClock = startClock();
+                 // Note: `_ponder_checkpoint` is not called here, instead it is called
+                 // in the `block` case.
+-                await database.userQB.transaction(async (tx) => {
+-                    await dropTriggers(tx, { tables }, context);
++            await database.userQB.transaction(async (tx) => {
++                await dropTriggers(tx, { tables }, context);
++                if (liveQueriesEnabled) {
+                     await dropLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++                }
+                     const counts = await revertOmnichain(tx, {
+                         tables,
+                         checkpoint: event.checkpoint,
+@@ -476,9 +487,11 @@ export async function runOmnichain({ common, preBuild, namespaceBuild, schemaBui
+                             row_count: counts[index],
+                         });
+                     }
+-                    await createTriggers(tx, { tables }, context);
++                await createTriggers(tx, { tables }, context);
++                if (liveQueriesEnabled) {
+                     await createLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
+-                });
++                }
++            });
+                 common.logger.info({
+                     msg: "Reorged block",
+                     chain: event.chain.name,
+diff --git a/src/database/actions.ts b/src/database/actions.ts
+index 99233fc6d7449fb8a7201a3b2dcabdc81a10bdb1..818b317edb91356fb3cf3bbb0ba38666f2e2f01e 100644
+--- a/src/database/actions.ts
++++ b/src/database/actions.ts
+@@ -37,6 +37,10 @@ import { getTableConfig } from "drizzle-orm/pg-core";
+ import { getPonderCheckpointTable } from "./index.js";
+ import type { QB } from "./queryBuilder.js";
+ 
++const liveQueriesEnabled =
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
++
+ export const createIndexes = async (
+   qb: QB,
+   { statements }: { statements: SchemaBuild["statements"] },
+@@ -144,6 +148,8 @@ export const createLiveQueryTriggers = async (
+   }: { namespaceBuild: NamespaceBuild; tables: Table[]; chainId?: number },
+   context?: { logger?: Logger },
+ ) => {
++  if (!liveQueriesEnabled) return;
++
+   await qb.transaction(
+     async (tx) => {
+       const notifyProcedure = getLiveQueryNotifyProcedureName();
+@@ -220,6 +226,8 @@ export const createLiveQueryProcedures = async (
+   { namespaceBuild }: { namespaceBuild: NamespaceBuild },
+   context?: { logger?: Logger },
+ ) => {
++  if (!liveQueriesEnabled) return;
++
+   await qb.transaction(
+     async (tx) => {
+       const schema = namespaceBuild.schema;
+@@ -355,11 +363,12 @@ export const createViews = async (
+         ),
+       );
+ 
+-      const notifyProcedure = getLiveQueryNotifyProcedureName();
+-      const channel = getLiveQueryChannelName(namespaceBuild.viewsSchema!);
++      if (liveQueriesEnabled) {
++        const notifyProcedure = getLiveQueryNotifyProcedureName();
++        const channel = getLiveQueryChannelName(namespaceBuild.viewsSchema!);
+ 
+-      await tx.wrap((tx) =>
+-        tx.execute(`
++        await tx.wrap((tx) =>
++          tx.execute(`
+ CREATE OR REPLACE FUNCTION "${namespaceBuild.viewsSchema}".${notifyProcedure}
+ RETURNS TRIGGER LANGUAGE plpgsql
+ AS $$
+@@ -385,22 +394,23 @@ AS $$
+     RETURN NULL;
+   END;
+ $$;`),
+-      );
++        );
+ 
+-      const trigger = getViewsLiveQueryNotifyTriggerName(
+-        namespaceBuild.viewsSchema,
+-      );
++        const trigger = getViewsLiveQueryNotifyTriggerName(
++          namespaceBuild.viewsSchema,
++        );
+ 
+-      await tx.wrap((tx) =>
+-        tx.execute(
+-          `
++        await tx.wrap((tx) =>
++          tx.execute(
++            `
+ CREATE OR REPLACE TRIGGER "${trigger}"
+ AFTER INSERT OR UPDATE OR DELETE
+ ON "${namespaceBuild.schema!}"._ponder_checkpoint
+ FOR EACH STATEMENT
+ EXECUTE PROCEDURE "${namespaceBuild.viewsSchema}".${notifyProcedure};`,
+-        ),
+-      );
++          ),
++        );
++      }
+     },
+     undefined,
+     context,
+diff --git a/src/runtime/isolated.ts b/src/runtime/isolated.ts
+index 1e026c995ce75d5ee05ba8bd48b6e37e7e514a69..5e8cc6c74cebc5085acf0c69e72b2caa482339cb 100644
+--- a/src/runtime/isolated.ts
++++ b/src/runtime/isolated.ts
+@@ -55,6 +55,10 @@ import { getCachedIntervals, getChildAddresses } from "./index.js";
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsIsolated } from "./realtime.js";
+ 
++const liveQueriesEnabled =
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
++
+ export async function runIsolated({
+   common,
+   preBuild,
+@@ -496,11 +500,19 @@ export async function runIsolated({
+   const endClock = startClock();
+ 
+   await createTriggers(database.adminQB, { tables, chainId: chain.id });
+-  await createLiveQueryTriggers(database.adminQB, {
+-    namespaceBuild,
+-    tables,
+-    chainId: chain.id,
+-  });
++  if (liveQueriesEnabled) {
++    await createLiveQueryTriggers(database.adminQB, {
++      namespaceBuild,
++      tables,
++      chainId: chain.id,
++    });
++  } else {
++    await dropLiveQueryTriggers(database.adminQB, {
++      namespaceBuild,
++      tables,
++      chainId: chain.id,
++    });
++  }
+ 
+   common.logger.debug({
+     msg: "Created database triggers",
+@@ -552,22 +564,24 @@ export async function runIsolated({
+ 
+         await database.userQB.transaction(
+           async (tx) => {
+-            if (database.userQB.$dialect === "postgres") {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
+-                  ),
+-                context,
+-              );
+-            } else {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
+-                  ),
+-                context,
+-              );
++            if (liveQueriesEnabled) {
++              if (database.userQB.$dialect === "postgres") {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
++                    ),
++                  context,
++                );
++              } else {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
++                    ),
++                  context,
++                );
++              }
+             }
+ 
+             // Events must be run block-by-block, so that `database.commitBlock` can accurately
+@@ -645,6 +659,7 @@ export async function runIsolated({
+             );
+ 
+             if (
++              liveQueriesEnabled &&
+               event.events.length > 0 &&
+               database.userQB.$dialect === "pglite"
+             ) {
+@@ -683,11 +698,13 @@ export async function runIsolated({
+         await database.userQB.transaction(
+           async (tx) => {
+             await dropTriggers(tx, { tables, chainId: chain.id }, context);
+-            await dropLiveQueryTriggers(
+-              tx,
+-              { namespaceBuild, tables, chainId: chain.id },
+-              context,
+-            );
++            if (liveQueriesEnabled) {
++              await dropLiveQueryTriggers(
++                tx,
++                { namespaceBuild, tables, chainId: chain.id },
++                context,
++              );
++            }
+ 
+             const counts = await revertIsolated(
+               tx,
+@@ -709,11 +726,13 @@ export async function runIsolated({
+             }
+ 
+             await createTriggers(tx, { tables, chainId: chain.id }, context);
+-            await createLiveQueryTriggers(
+-              tx,
+-              { namespaceBuild, tables, chainId: chain.id },
+-              context,
+-            );
++            if (liveQueriesEnabled) {
++              await createLiveQueryTriggers(
++                tx,
++                { namespaceBuild, tables, chainId: chain.id },
++                context,
++              );
++            }
+           },
+           undefined,
+           context,
+diff --git a/src/runtime/multichain.ts b/src/runtime/multichain.ts
+index 04579acf84a612e41b10d86bee054a8cb63bb1eb..345eca9a4d88be66dff8d1f7a323a7b1e6278786 100644
+--- a/src/runtime/multichain.ts
++++ b/src/runtime/multichain.ts
+@@ -70,6 +70,10 @@ import {
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsMultichain } from "./realtime.js";
+ 
++const liveQueriesEnabled =
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
++
+ export async function runMultichain({
+   common,
+   preBuild,
+@@ -568,7 +572,11 @@ export async function runMultichain({
+   endClock = startClock();
+ 
+   await createTriggers(database.adminQB, { tables });
+-  await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  if (liveQueriesEnabled) {
++    await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  } else {
++    await dropLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  }
+ 
+   common.logger.debug({
+     msg: "Created database triggers",
+@@ -638,22 +646,24 @@ export async function runMultichain({
+ 
+         await database.userQB.transaction(
+           async (tx) => {
+-            if (database.userQB.$dialect === "postgres") {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
+-                  ),
+-                context,
+-              );
+-            } else {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
+-                  ),
+-                context,
+-              );
++            if (liveQueriesEnabled) {
++              if (database.userQB.$dialect === "postgres") {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
++                    ),
++                  context,
++                );
++              } else {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
++                    ),
++                  context,
++                );
++              }
+             }
+ 
+             // Events must be run block-by-block, so that `database.commitBlock` can accurately
+@@ -735,7 +745,7 @@ export async function runMultichain({
+               context,
+             );
+ 
+-            if (database.userQB.$dialect === "pglite") {
++            if (liveQueriesEnabled && database.userQB.$dialect === "pglite") {
+               await tx.wrap(
+                 (tx) => tx.execute("TRUNCATE TABLE live_query_tables"),
+                 context,
+@@ -771,11 +781,13 @@ export async function runMultichain({
+         await database.userQB.transaction(
+           async (tx) => {
+             await dropTriggers(tx, { tables }, context);
+-            await dropLiveQueryTriggers(
+-              tx,
+-              { namespaceBuild, tables },
+-              context,
+-            );
++            if (liveQueriesEnabled) {
++              await dropLiveQueryTriggers(
++                tx,
++                { namespaceBuild, tables },
++                context,
++              );
++            }
+ 
+             const counts = await revertMultichain(
+               tx,
+@@ -795,11 +807,13 @@ export async function runMultichain({
+             }
+ 
+             await createTriggers(tx, { tables }, context);
+-            await createLiveQueryTriggers(
+-              tx,
+-              { namespaceBuild, tables },
+-              context,
+-            );
++            if (liveQueriesEnabled) {
++              await createLiveQueryTriggers(
++                tx,
++                { namespaceBuild, tables },
++                context,
++              );
++            }
+           },
+           undefined,
+           context,
+diff --git a/src/runtime/omnichain.ts b/src/runtime/omnichain.ts
+index a7fd55304e438f0cf2f916c75715e835ab18fa57..87068256895117ed5b6936fdfc76fa7db1fe87e0 100644
+--- a/src/runtime/omnichain.ts
++++ b/src/runtime/omnichain.ts
+@@ -73,6 +73,10 @@ import {
+ import { initSyncProgress } from "./init.js";
+ import { getRealtimeEventsOmnichain } from "./realtime.js";
+ 
++const liveQueriesEnabled =
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "1" ||
++  process.env.PONDER_ENABLE_LIVE_QUERIES === "true";
++
+ export async function runOmnichain({
+   common,
+   preBuild,
+@@ -583,7 +587,11 @@ export async function runOmnichain({
+   endClock = startClock();
+ 
+   await createTriggers(database.adminQB, { tables });
+-  await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  if (liveQueriesEnabled) {
++    await createLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  } else {
++    await dropLiveQueryTriggers(database.adminQB, { namespaceBuild, tables });
++  }
+ 
+   common.logger.debug({
+     msg: "Created database triggers",
+@@ -654,22 +662,24 @@ export async function runOmnichain({
+ 
+         await database.userQB.transaction(
+           async (tx) => {
+-            if (database.userQB.$dialect === "postgres") {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
+-                  ),
+-                context,
+-              );
+-            } else {
+-              await tx.wrap(
+-                (tx) =>
+-                  tx.execute(
+-                    "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
+-                  ),
+-                context,
+-              );
++            if (liveQueriesEnabled) {
++              if (database.userQB.$dialect === "postgres") {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE live_query_tables (table_name TEXT PRIMARY KEY) ON COMMIT DROP",
++                    ),
++                  context,
++                );
++              } else {
++                await tx.wrap(
++                  (tx) =>
++                    tx.execute(
++                      "CREATE TEMP TABLE IF NOT EXISTS live_query_tables (table_name TEXT PRIMARY KEY)",
++                    ),
++                  context,
++                );
++              }
+             }
+ 
+             // Events must be run block-by-block, so that `database.commitBlock` can accurately
+@@ -755,7 +765,7 @@ export async function runOmnichain({
+               context,
+             );
+ 
+-            if (database.userQB.$dialect === "pglite") {
++            if (liveQueriesEnabled && database.userQB.$dialect === "pglite") {
+               await tx.wrap(
+                 (tx) => tx.execute("TRUNCATE TABLE live_query_tables"),
+                 context,
+@@ -790,7 +800,9 @@ export async function runOmnichain({
+ 
+         await database.userQB.transaction(async (tx) => {
+           await dropTriggers(tx, { tables }, context);
+-          await dropLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++          if (liveQueriesEnabled) {
++            await dropLiveQueryTriggers(tx, { namespaceBuild, tables }, context);
++          }
+ 
+           const counts = await revertOmnichain(
+             tx,
+@@ -810,11 +822,13 @@ export async function runOmnichain({
+           }
+ 
+           await createTriggers(tx, { tables }, context);
+-          await createLiveQueryTriggers(
+-            tx,
+-            { namespaceBuild, tables },
+-            context,
+-          );
++          if (liveQueriesEnabled) {
++            await createLiveQueryTriggers(
++              tx,
++              { namespaceBuild, tables },
++              context,
++            );
++          }
+         });
+ 
+         common.logger.info({

@@ -12,8 +12,8 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "ponder": "^0.15.18",
     "hono": "^4.5.0",
+    "ponder": "^0.15.18",
     "viem": "^2.21.3"
   },
   "devDependencies": {
@@ -25,5 +25,10 @@
   "engines": {
     "node": ">=18.14"
   },
-  "packageManager": "pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531"
+  "packageManager": "pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531",
+  "pnpm": {
+    "patchedDependencies": {
+      "ponder@0.15.18": "patches/ponder@0.15.18.patch"
+    }
+  }
 }
