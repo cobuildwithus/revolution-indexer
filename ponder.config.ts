@@ -1,5 +1,4 @@
 import { createConfig } from "ponder";
-import { fallback, http } from "viem";
 import { base } from "viem/chains";
 
 import { auctionHouseAbi } from "./abis/AuctionHouseAbi";
@@ -12,49 +11,17 @@ import {
   VRBS_START_BLOCK,
 } from "./src/config/contracts";
 
-const ALCHEMY_API_KEY_BASE = process.env.ALCHEMY_API_KEY_BASE;
 const DWELLIR_API_KEY = process.env.DWELLIR_API_KEY;
-
-const defined = <T>(value: T | undefined | null): value is T => !!value;
-
-type HttpTransport = ReturnType<typeof http>;
-
-function assertAtLeastTwo<T>(items: T[]): asserts items is [T, T, ...T[]] {
-  if (items.length < 2) {
-    throw new Error("Expected at least two transports.");
-  }
+if (!DWELLIR_API_KEY) {
+  throw new Error("Missing required env var: DWELLIR_API_KEY");
 }
-
-const getBaseRpcTransport = () => {
-  const urls = [
-    DWELLIR_API_KEY && `https://api-base-mainnet.n.dwellir.com/${DWELLIR_API_KEY}`,
-    ALCHEMY_API_KEY_BASE &&
-      `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY_BASE}`,
-  ].filter(defined);
-
-  if (urls.length === 0) {
-    throw new Error(
-      "Missing RPC key. Set DWELLIR_API_KEY (preferred) or ALCHEMY_API_KEY_BASE (fallback).",
-    );
-  }
-
-  const transports = urls.map((url) => http(url));
-  if (transports.length === 1) {
-    return transports[0];
-  }
-
-  assertAtLeastTwo(transports);
-  return fallback(
-    transports as readonly [HttpTransport, HttpTransport, ...HttpTransport[]],
-  );
-};
 
 export default createConfig({
   database: { kind: "postgres" },
   chains: {
     base: {
       id: base.id,
-      rpc: getBaseRpcTransport(),
+      rpc: `https://api-base-mainnet.n.dwellir.com/${DWELLIR_API_KEY}`,
     },
   },
   contracts: {
