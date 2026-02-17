@@ -1,4 +1,5 @@
 import { createConfig } from "ponder";
+import { fallback, http } from "viem";
 import { base } from "viem/chains";
 
 import { auctionHouseAbi } from "./abis/AuctionHouseAbi";
@@ -12,16 +13,32 @@ import {
 } from "./src/config/contracts";
 
 const DWELLIR_API_KEY = process.env.DWELLIR_API_KEY;
+const ALCHEMY_API_KEY_BASE = process.env.ALCHEMY_API_KEY_BASE;
 if (!DWELLIR_API_KEY) {
   throw new Error("Missing required env var: DWELLIR_API_KEY");
 }
+
+const getBaseRpcTransport = () => {
+  const dwellirTransport = http(
+    `https://api-base-mainnet-archive.n.dwellir.com/${DWELLIR_API_KEY}`,
+  );
+
+  if (!ALCHEMY_API_KEY_BASE) {
+    return dwellirTransport;
+  }
+
+  return fallback([
+    dwellirTransport,
+    http(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY_BASE}`),
+  ]);
+};
 
 export default createConfig({
   database: { kind: "postgres" },
   chains: {
     base: {
       id: base.id,
-      rpc: `https://api-base-mainnet.n.dwellir.com/${DWELLIR_API_KEY}`,
+      rpc: getBaseRpcTransport(),
     },
   },
   contracts: {
