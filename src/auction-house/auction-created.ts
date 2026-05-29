@@ -56,6 +56,12 @@ ponder.on(
       winningBid: null,
       auctionContractAddress,
       nftContractAddress: tokenContract,
+      saleType: "auction",
+      pieceId: null,
+      submissionSlug: null,
+      buyer: null,
+      recipient: null,
+      referral: null,
       pointsPaidToCreators: null,
       ethPaidToCreators: null,
       nftTokenId: tokenId,
@@ -72,7 +78,24 @@ ponder.on(
       updatedAt: createdAt,
     };
 
-    const { id: _id, ...updateDoc } = doc;
+    const {
+      id: _id,
+      winner: _winner,
+      winningBid: _winningBid,
+      recipient: _recipient,
+      pointsPaidToCreators: _pointsPaidToCreators,
+      ethPaidToCreators: _ethPaidToCreators,
+      details: _details,
+      creatorRateBps: _creatorRateBps,
+      entropyRateBps: _entropyRateBps,
+      acceptanceManifestoSpeech: _acceptanceManifestoSpeech,
+      reservePrice: _reservePrice,
+      minBidIncrementPercentage: _minBidIncrementPercentage,
+      timeBuffer: _timeBuffer,
+      settlementTransactionHash: _settlementTransactionHash,
+      updatedAt: _updatedAt,
+      ...updateDoc
+    } = doc;
     await context.db.insert(auctions).values(doc).onConflictDoUpdate(updateDoc);
   },
 );

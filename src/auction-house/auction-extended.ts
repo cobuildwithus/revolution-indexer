@@ -43,7 +43,7 @@ ponder.on(
     };
 
     await context.db.update(auctions, { id: auctionUniqueId }).set({
-      updatedAt: new Date(),
+      updatedAt: toDateFromSeconds(event.block.timestamp),
       details: updatedDetails,
     });
   },
