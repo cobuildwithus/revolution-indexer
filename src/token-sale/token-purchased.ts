@@ -46,13 +46,16 @@ ponder.on(
     const submissionSlug = cultureIndexAddress
       ? `${chainId}:${cultureIndexAddress}:${pieceId}`
       : null;
+    const buyer = normalizeAddress(event.args.buyer);
+    const recipient = normalizeAddress(event.args.recipient);
+    const referral = nullableAddress(event.args.referral);
 
     const details = {
       saleType: "vrgda",
       pieceId,
-      buyer: normalizeAddress(event.args.buyer),
-      recipient: normalizeAddress(event.args.recipient),
-      referral: nullableAddress(event.args.referral),
+      buyer,
+      recipient,
+      referral,
       saleContractAddress,
       legacyAuctionHouseAddress,
       cultureIndexAddress,
@@ -69,10 +72,16 @@ ponder.on(
       uniqueId,
       chainId,
       name: tokenId,
-      winner: normalizeAddress(event.args.recipient),
+      winner: recipient,
       winningBid: event.args.price.toString(),
       auctionContractAddress: saleContractAddress,
       nftContractAddress: tokenContract,
+      saleType: "vrgda",
+      pieceId,
+      submissionSlug,
+      buyer,
+      recipient,
+      referral,
       pointsPaidToCreators: event.args.pointsPaidToCreators.toString(),
       ethPaidToCreators: event.args.ethPaidToCreators.toString(),
       nftTokenId: tokenId,
@@ -89,7 +98,12 @@ ponder.on(
       updatedAt: purchaseTime,
     };
 
-    const { id: _id, acceptanceManifestoSpeech: _speech, ...updateDoc } = doc;
+    const {
+      id: _id,
+      acceptanceManifestoSpeech: _speech,
+      updatedAt: _updatedAt,
+      ...updateDoc
+    } = doc;
     await context.db.insert(auctions).values(doc).onConflictDoUpdate(updateDoc);
   },
 );

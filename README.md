@@ -1,8 +1,8 @@
 # Revolution Indexer
 
 Ponder-based indexer for Revolution contracts on Base mainnet. It ingests onchain
-AuctionHouse, CultureIndex, and RevolutionDao events into Postgres and exposes
-SQL + GraphQL APIs for downstream apps.
+AuctionHouse, TokenSale, CultureIndex, and RevolutionDao events into Postgres and
+exposes SQL + GraphQL APIs for downstream apps.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ DWELLIR_API_KEY=your_dwellir_key
 # Optional: used as RPC fallback and for AuctionHouse NFT metadata name lookups.
 ALCHEMY_API_KEY_BASE=your_alchemy_key
 DATABASE_URL="postgresql://user:password@host:5432/dbname"
-# Optional: override the default Postgres schema name
+# Optional: override the default Postgres schema name for local/dev runs.
 DATABASE_SCHEMA=revolution
 ```
 
@@ -48,6 +48,24 @@ Ponder prints the local API URL in the terminal. Use that for GraphQL or SQL.
 - `pnpm lint`: Run ESLint.
 - `pnpm typecheck`: Run TypeScript type checking.
 
+## Production Schema Rollouts
+
+Ponder production deployments should index into a fresh deployment schema and
+publish stable views after the backfill is ready. Do not point a changed build at
+an already-populated stable schema unless you are also running an explicit
+expand/backfill/contract database migration.
+
+Example:
+
+```sh
+pnpm start --schema=<deployment_schema> --views-schema=revolution
+```
+
+The typed sale columns on `auctions` include a non-null `saleType`; a fresh
+schema or full replay is safe because every auction insert path writes it. An
+in-place table change against existing rows must backfill `sale_type` before
+enforcing `NOT NULL`.
+
 ## Project Layout
 
 - `ponder.config.ts`: Chain + contract configuration.
@@ -55,6 +73,7 @@ Ponder prints the local API URL in the terminal. Use that for GraphQL or SQL.
 - `src/index.ts`: Registers all indexing handlers.
 - `src/api/index.ts`: Hono API wiring for SQL + GraphQL.
 - `src/auction-house/*`: AuctionHouse event handlers.
+- `src/token-sale/*`: TokenSale event handlers for VRGDA buy-now purchases.
 - `src/culture-index/*`: CultureIndex event handlers.
 - `src/revolution-dao/*`: RevolutionDao event handlers.
 - `src/config/contracts.ts`: Contract addresses + start blocks.
@@ -68,9 +87,13 @@ chain + contract + onchain identifiers.
 ### Auctions
 - **Table**: `auctions`
 - **Primary key**: `id` (same as `uniqueId`)
-- **Unique ID**: `chainId + tokenId + tokenContract + auctionContract`
-- **Purpose**: One row per auction. Stores winner, winningBid, creator/entropy
-  rates, timing details, and settlement info.
+- **Unique ID**: `chainId + tokenId + tokenContract + saleContract`
+- **Purpose**: One row per primary NFT sale. AuctionHouse rows use
+  `saleType = "auction"`; TokenSale VRGDA buy-now rows use
+  `saleType = "vrgda"`. The row stores recipient/winner, paid price,
+  creator/entropy rates, timing details, settlement or purchase tx hash, and
+  typed buy-now fields such as `pieceId`, `submissionSlug`, `buyer`,
+  `recipient`, and `referral`.
 
 ### Auction bids
 - **Table**: `auctionBids`
@@ -108,9 +131,10 @@ chain + contract + onchain identifiers.
 
 ### 1) Chain & contracts
 `ponder.config.ts` connects to Base mainnet using Dwellir and optionally falls
-back to Alchemy when `ALCHEMY_API_KEY_BASE` is configured. It registers three
-contracts (AuctionHouse, CultureIndex, RevolutionDao) using addresses from
-`src/config/contracts.ts`. Indexing starts at `VRBS_START_BLOCK`.
+back to Alchemy when `ALCHEMY_API_KEY_BASE` is configured. It registers four
+contracts (AuctionHouse, TokenSale, CultureIndex, RevolutionDao) using addresses
+from `src/config/contracts.ts`. Legacy contracts index from `VRBS_START_BLOCK`;
+TokenSale indexes from `TOKEN_SALE_START_BLOCK`.
 
 ### 2) Event handlers
 Handlers live in `src/**` and are wired by `src/index.ts`.
@@ -123,6 +147,12 @@ Handlers live in `src/**` and are wired by `src/index.ts`.
 - Settings updates (time buffer, reserve price, min bid increment, creator
   rate, entropy rate) update only *active* auctions.
 - `ManifestoUpdated` stores the acceptance speech.
+
+**TokenSale** (`src/token-sale/*`)
+- `TokenPurchased` inserts/upserts VRGDA buy-now rows into `auctions` with
+  `saleType = "vrgda"`.
+- `auctionContractAddress` stores the TokenSale proxy address for these rows.
+- `ManifestoUpdated` stores the acceptance speech for TokenSale purchases.
 
 **CultureIndex** (`src/culture-index/*`)
 - `PieceCreated` inserts/upserts submissions, normalizes IPFS media URLs, and

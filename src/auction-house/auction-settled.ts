@@ -6,6 +6,7 @@ import {
   generateAuctionUniqueId,
   getAuctionTokenContract,
   normalizeAddress,
+  toDateFromSeconds,
 } from "./helpers";
 
 ponder.on(
@@ -27,18 +28,15 @@ ponder.on(
       auctionContractAddress,
     );
 
-    const pointsPaidToCreators = event.args.pointsPaidToCreators
-      ? event.args.pointsPaidToCreators.toString()
-      : null;
-    const ethPaidToCreators = event.args.ethPaidToCreators
-      ? event.args.ethPaidToCreators.toString()
-      : null;
+    const pointsPaidToCreators = event.args.pointsPaidToCreators.toString();
+    const ethPaidToCreators = event.args.ethPaidToCreators.toString();
 
     await context.db.update(auctions, { id: auctionUniqueId }).set({
-      updatedAt: new Date(),
+      updatedAt: toDateFromSeconds(event.block.timestamp),
       pointsPaidToCreators,
       ethPaidToCreators,
       winner: normalizeAddress(event.args.winner),
+      recipient: normalizeAddress(event.args.winner),
       winningBid: event.args.amount.toString(),
       settlementTransactionHash: event.transaction.hash.toLowerCase(),
     });
