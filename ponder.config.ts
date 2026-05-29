@@ -5,10 +5,13 @@ import { base } from "viem/chains";
 import { auctionHouseAbi } from "./abis/AuctionHouseAbi";
 import { CultureIndexAbi } from "./abis/CultureIndexAbi";
 import { RevolutionDaoLogicV1Abi } from "./abis/RevolutionDaoLogicV1Abi";
+import { RevolutionTokenSaleAbi } from "./abis/RevolutionTokenSaleAbi";
 import {
   AUCTION_HOUSE_ADDRESSES,
   CULTURE_INDEX_ADDRESSES,
   REVOLUTION_DAO_ADDRESSES,
+  TOKEN_SALE_ADDRESSES,
+  TOKEN_SALE_START_BLOCK,
   VRBS_START_BLOCK,
 } from "./src/config/contracts";
 
@@ -47,6 +50,12 @@ export default createConfig({
       abi: auctionHouseAbi,
       address: AUCTION_HOUSE_ADDRESSES,
       startBlock: VRBS_START_BLOCK,
+    },
+    TokenSale: {
+      chain: "base",
+      abi: RevolutionTokenSaleAbi,
+      address: TOKEN_SALE_ADDRESSES,
+      startBlock: TOKEN_SALE_START_BLOCK,
     },
     CultureIndex: {
       chain: "base",

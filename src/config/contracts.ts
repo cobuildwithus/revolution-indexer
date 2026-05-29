@@ -5,6 +5,11 @@ type ContractSpec = {
   address: Address;
 };
 
+type TokenSaleContractSpec = ContractSpec & {
+  legacyAuctionHouseAddress: Address;
+  cultureIndexAddress: Address;
+};
+
 export const AUCTION_HOUSE_CONTRACTS = [
   { name: "vrbs", address: "0x4153b0310354b189e18797d5d7dfda2c924bdc3d" },
   { name: "grounds", address: "0xa79be6894c4817a67c6ef6c5b11e3e8cace95717" },
@@ -20,12 +25,23 @@ export const REVOLUTION_DAO_CONTRACTS = [
   { name: "grounds", address: "0xc052ace88f0a8dfc58ba10b9c6de02357fba0cd7" },
 ] as const satisfies readonly ContractSpec[];
 
+export const TOKEN_SALE_CONTRACTS = [
+  {
+    name: "vrbs",
+    address: "0x3a34ca534e31f8a03404e54b9c89684c8a6322ef",
+    legacyAuctionHouseAddress: "0x4153b0310354b189e18797d5d7dfda2c924bdc3d",
+    cultureIndexAddress: "0x5da551c18109b58831abe8a5b9edc5f9a8e4887c",
+  },
+] as const satisfies readonly TokenSaleContractSpec[];
+
 const getAddresses = <T extends readonly { address: Address }[]>(items: T) =>
   items.map((item) => item.address) as readonly T[number]["address"][];
 
 export const AUCTION_HOUSE_ADDRESSES = getAddresses(AUCTION_HOUSE_CONTRACTS);
 export const CULTURE_INDEX_ADDRESSES = getAddresses(CULTURE_INDEX_CONTRACTS);
 export const REVOLUTION_DAO_ADDRESSES = getAddresses(REVOLUTION_DAO_CONTRACTS);
+export const TOKEN_SALE_ADDRESSES = getAddresses(TOKEN_SALE_CONTRACTS);
 
 export const VRBS_START_BLOCK = 11346628;
 export const GROUNDS_START_BLOCK = 12698632;
+export const TOKEN_SALE_START_BLOCK = 45823504;

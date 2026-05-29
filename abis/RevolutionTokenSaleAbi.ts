@@ -1,0 +1,62 @@
+export const RevolutionTokenSaleAbi = [
+  {
+    type: "event",
+    name: "TokenPurchased",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: true, name: "pieceId", type: "uint256" },
+      { indexed: true, name: "buyer", type: "address" },
+      { indexed: false, name: "recipient", type: "address" },
+      { indexed: false, name: "price", type: "uint256" },
+      { indexed: false, name: "referral", type: "address" },
+      { indexed: false, name: "pointsPaidToCreators", type: "uint256" },
+      { indexed: false, name: "ethPaidToCreators", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "ManifestoUpdated",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: false, name: "member", type: "address" },
+      { indexed: false, name: "speech", type: "string" },
+    ],
+  },
+  {
+    type: "function",
+    name: "revolutionToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+  {
+    type: "function",
+    name: "creatorRateBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "entropyRateBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "minPriceWei",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "priceUpdateInterval",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
