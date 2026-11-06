@@ -22,23 +22,24 @@ if (!DWELLIR_API_KEY) {
 }
 
 const getBaseRpcTransport = () => {
-  // retryCount: 0 so that once Dwellir's monthly quota is exhausted and it
-  // starts erroring, each request fails over to Alchemy immediately instead
-  // of burning 3 retries with backoff against a dead endpoint. Traffic
-  // returns to Dwellir automatically when its quota resets.
-  const dwellirTransport = http(
-    `https://api-base-mainnet-archive.n.dwellir.com/${DWELLIR_API_KEY}`,
-    { retryCount: 0 },
-  );
+  // retryCount: 0 so a failed request moves to the next provider at once.
+  const transports = [
+    http(`https://api-base-mainnet-archive.n.dwellir.com/${DWELLIR_API_KEY}`, {
+      retryCount: 0,
+    }),
+    // Free and keyless, but not an archive node: it serves the recent blocks
+    // and logs that catch-up needs and rejects old ranges.
+    http("https://base-rpc.publicnode.com", { retryCount: 0 }),
+  ];
 
-  if (!ALCHEMY_API_KEY_BASE) {
-    return dwellirTransport;
+  // Last resort, for old blocks while Dwellir is down.
+  if (ALCHEMY_API_KEY_BASE) {
+    transports.push(
+      http(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY_BASE}`),
+    );
   }
 
-  return fallback([
-    dwellirTransport,
-    http(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY_BASE}`),
-  ]);
+  return fallback(transports);
 };
 
 export default createConfig({
@@ -47,12 +48,12 @@ export default createConfig({
     base: {
       id: base.id,
       rpc: getBaseRpcTransport(),
-      // Default is 1000ms, which adds ~86K eth_getBlockByNumber/day of
-      // "latest" polls on top of the per-block fetches realtime sync always
-      // does (~43K/day on Base). Any interval >= block time converges to one
-      // fetch per block; 10s cuts total RPC volume ~40% while keeping reorg
-      // handling snappy. Events land up to ~10s late, which is fine here.
-      pollingInterval: 10_000,
+      // Base makes 5 blocks a second. Realtime sync fetches every block but at
+      // most 50 per poll, so this interval sets the RPC bill: 5 minutes is about
+      // 14K block fetches a day, inside Dwellir's free 100K. That can't keep up
+      // with the chain, so scripts/start-with-catch-up.mjs restarts Ponder every
+      // hour to jump back to the head with ranged eth_getLogs.
+      pollingInterval: 300_000,
     },
   },
   contracts: {

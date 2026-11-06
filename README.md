@@ -10,7 +10,7 @@ exposes SQL + GraphQL APIs for downstream apps.
 - pnpm >= 9
 - Postgres (this project configures `database.kind = "postgres"` in Ponder)
 - A Dwellir API key for Base mainnet (`DWELLIR_API_KEY`)
-- Optional: an Alchemy API key for Base RPC fallback + NFT metadata names (`ALCHEMY_API_KEY_BASE`)
+- Optional: an Alchemy API key for last-resort RPC + NFT metadata names (`ALCHEMY_API_KEY_BASE`)
 
 ## Setup
 
@@ -24,7 +24,7 @@ pnpm install
 
 ```sh
 DWELLIR_API_KEY=your_dwellir_key
-# Optional: used as RPC fallback and for AuctionHouse NFT metadata name lookups.
+# Optional: used as last-resort RPC and for AuctionHouse NFT metadata name lookups.
 ALCHEMY_API_KEY_BASE=your_alchemy_key
 DATABASE_URL="postgresql://user:password@host:5432/dbname"
 # Optional: override the default Postgres schema name for local/dev runs.
@@ -130,8 +130,11 @@ chain + contract + onchain identifiers.
 ## How the Indexer Works
 
 ### 1) Chain & contracts
-`ponder.config.ts` connects to Base mainnet using Dwellir and optionally falls
-back to Alchemy when `ALCHEMY_API_KEY_BASE` is configured. It registers four
+`ponder.config.ts` connects to Base mainnet using Dwellir, falls back to
+PublicNode, and tries Alchemy last when `ALCHEMY_API_KEY_BASE` is configured.
+It polls every 5 minutes to stay on free RPC plans, and
+`scripts/start-with-catch-up.mjs` restarts Ponder hourly to catch up, so data
+can lag by about an hour. It registers four
 contracts (AuctionHouse, TokenSale, CultureIndex, RevolutionDao) using addresses
 from `src/config/contracts.ts`. Legacy contracts index from `VRBS_START_BLOCK`;
 TokenSale indexes from `TOKEN_SALE_START_BLOCK`.
