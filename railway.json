@@ -1,0 +1,6 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "node scripts/start-with-catch-up.mjs --schema $RAILWAY_DEPLOYMENT_ID --views-schema revolution"
+  }
+}
